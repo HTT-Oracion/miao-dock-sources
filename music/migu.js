@@ -163,6 +163,17 @@ class MiguSource extends MusicSourceBase {
     return { lrc: res.body };
   }
 
+  /// 账户信息（对齐 miao-dock：GET queryUserInfo，Cookie 由引擎注入）。
+  async loginInfo() {
+    const json = await this.getJson(
+      'https://app.c.nf.migu.cn/pc/user/h5/queryUserInfo/v1.0',
+      { Cookie: await getSessionCookie() },
+    );
+    const user = (json && json.userInfoItem) || null;
+    if (!user || !user.userId) return { loggedIn: false, nick: '' };
+    return { loggedIn: true, nick: String(user.nickName || '咪咕用户') };
+  }
+
   // ── 映射 ────────────────────────────────────────────────────────────────
 
   song(it) {

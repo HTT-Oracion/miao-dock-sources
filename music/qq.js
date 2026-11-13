@@ -165,6 +165,35 @@ class QqSource extends MusicSourceBase {
     return { url: null };
   }
 
+  /// 账户信息（对齐 miao-dock：musicu GetLoginUserInfo；Cookie 带 qm_keyst 时
+  /// comm 加 authst 才拿得到昵称）。
+  async loginInfo() {
+    const cookie = await getSessionCookie();
+    const jar = {};
+    (cookie || '').split(';').forEach((part) => {
+      const i = part.indexOf('=');
+      if (i > 0) jar[part.substring(0, i).trim()] = part.substring(i + 1).trim();
+    });
+    const uin = jar.uin || jar.qq || '';
+    const musicKey = jar.qm_keyst || jar.qqmusic_key || '';
+    if (!uin || !musicKey) return { loggedIn: false, nick: '' };
+
+    const payload = {
+      comm: { uin: uin, format: 'json', ct: 19, cv: 0, authst: musicKey },
+      req_0: {
+        module: 'music.UserInfo.userInfoServer',
+        method: 'GetLoginUserInfo',
+        param: {},
+      },
+    };
+    const json = await this.postJsonMusicu(payload);
+    const data = json.req_0 && json.req_0.data;
+    if (!data) return { loggedIn: false, nick: '' };
+    const user = data.user_info || data.userInfo || data.user || data.profile || data;
+    const nick = String(user.nick || user.nickname || user.name || '');
+    return { loggedIn: nick.length > 0, nick: nick };
+  }
+
   /// musicu POST：sign 挂在 URL 上；comm 用 payload 里的（songUrl 用简化版）。
   async postJsonMusicu(payload) {
     const body = JSON.stringify(payload);

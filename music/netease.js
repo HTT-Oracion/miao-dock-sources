@@ -89,11 +89,22 @@ class NeteaseSource extends MusicSourceBase {
   }
 
   /// 账户信息（App 登录后回读昵称 / 校验 Cookie 有效性）。
-  /// Cookie 由 App 注入引擎 Cookie 罐（setSessionCookie），这里直接带 Cookie 请求。
+  /// 🔴 对齐 miao-dock：用 GET `/api/w/nuser/account/get`（带 Cookie）；
+  /// profile 兜底链 data.profile → body.profile → account.profile。
   async loginInfo() {
-    const json = await this.postForm('/api/nuser/account/get', {});
-    const profile = json.profile || {};
-    return { loggedIn: !!profile.userId, nick: String(profile.nickname || '') };
+    const json = await this.getJson('/api/w/nuser/account/get');
+    const data = json.data || json;
+    const profile = data.profile || json.profile || (data.account && data.account.profile) || (json.account && json.account.profile) || null;
+    if (!profile) return { loggedIn: false, nick: '' };
+    // userId 必须存在才算登录（参考 normalizeLoginInfo）。
+    const uid = String(profile.userId || profile.user_id || profile.id || '');
+    return { loggedIn: uid.length > 0, nick: String(profile.nickname || '') };
+  }
+
+  /// 发现页「推荐歌单」卡（匿名可取）。
+  async recommendedPlaylists({ limit = 6 }) {
+    const json = await this.postForm('/api/personalized/playlist', { limit: limit, csrf_token: '' });
+    return { playlists: this.playlists(json.result || []) };
   }
 
   async userPlaylists() {
@@ -149,6 +160,8 @@ class NeteaseSource extends MusicSourceBase {
       description: nick,
       coverUrl: String(it.coverImgUrl || it.picUrl || ''),
       author: nick || undefined,
+      // 🔴 specialType=5 是【我喜欢的音乐】：歌单库用它做置顶横卡（groupPlaylists）。
+      special: Number(it.specialType || 0) === 5,
       subscribed: it.subscribed === true,
     };
   }

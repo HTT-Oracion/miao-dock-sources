@@ -132,6 +132,49 @@ class KugouSource extends MusicSourceBase {
     return { url: url ? String(url) : null };
   }
 
+  /// 账户信息（对齐 miao-dock：昵称取 Cookie KuGoo 复合字段的 NickName；
+  /// loggedIn 走 userid 有效判定；昵称缺失兜底「酷狗 {userid}」）。
+  async loginInfo() {
+    const cookie = await getSessionCookie();
+    const auth = this.parseAuth(cookie);
+    if (!auth || !auth.loggedInRaw) return { loggedIn: false, nick: '' };
+    const kugooRaw = this.kugooField(cookie);
+    let nick = '';
+    if (kugooRaw) {
+      try {
+        const map = {};
+        decodeURIComponent(kugooRaw).split('&').forEach((part) => {
+          const i = part.indexOf('=');
+          if (i > 0) map[part.substring(0, i).trim()] = part.substring(i + 1).trim();
+        });
+        nick = String(map.NickName || map.nickname || '');
+      } catch (e) {
+        nick = '';
+      }
+    }
+    if (!nick) {
+      // Cookie 明文键兜底（部分版本写在外面）。
+      const jar = {};
+      (cookie || '').split(';').forEach((part) => {
+        const i = part.indexOf('=');
+        if (i > 0) jar[part.substring(0, i).trim()] = part.substring(i + 1).trim();
+      });
+      nick = String(jar.NickName || jar.nickname || '');
+    }
+    if (!nick) nick = '酷狗 ' + (auth.userId || '用户');
+    return { loggedIn: true, nick: nick };
+  }
+
+  /// 从 Cookie 串里取 KuGoo / kugou 复合字段原始值。
+  kugooField(cookie) {
+    const jar = {};
+    (cookie || '').split(';').forEach((part) => {
+      const i = part.indexOf('=');
+      if (i > 0) jar[part.substring(0, i).trim()] = part.substring(i + 1).trim();
+    });
+    return jar.KuGoo || jar.kugou || jar.Kugou || '';
+  }
+
   parseAuth(cookie) {
     const map = {};
     (cookie || '').split(';').forEach((part) => {
@@ -141,8 +184,9 @@ class KugouSource extends MusicSourceBase {
     const userId = map.userid || map.UserId || '';
     const mid = map.mid || map.KugouID || '';
     const token = map.token || map.t || '';
-    if (!token || !userId) return null;
-    return { userId: userId, mid: mid || '1', token: token };
+    const hasKugoo = !!map.KuGoo;
+    if ((!token || !userId) && !hasKugoo) return null;
+    return { userId: userId, mid: mid || '1', token: token, loggedInRaw: true };
   }
 
   // ── 映射 ────────────────────────────────────────────────────────────────
