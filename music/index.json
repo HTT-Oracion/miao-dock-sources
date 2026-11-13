@@ -1,0 +1,30 @@
+[
+  {
+    "name": "网易云",
+    "fileName": "netease.js",
+    "key": "netease",
+    "version": "1.0.0",
+    "description": "网易云在线源：搜索 / 榜单 / 歌单 / 歌词 / 播放"
+  },
+  {
+    "name": "酷狗",
+    "fileName": "kugou.js",
+    "key": "kugou",
+    "version": "1.0.0",
+    "description": "酷狗在线源：搜索 / 榜单 / 歌单 / 歌词 / 播放（播放需登录）"
+  },
+  {
+    "name": "QQ 音乐",
+    "fileName": "qq.js",
+    "key": "qq",
+    "version": "1.0.0",
+    "description": "QQ 音乐在线源：搜索 / 榜单 / 歌单 / 歌词 / 播放"
+  },
+  {
+    "name": "咪咕",
+    "fileName": "migu.js",
+    "key": "migu",
+    "version": "1.0.0",
+    "description": "咪咕在线源：搜索 / 榜单 / 歌单 / 歌词 / 播放"
+  }
+]
