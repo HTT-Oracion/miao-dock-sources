@@ -23,7 +23,7 @@ class KugouSource extends MusicSourceBase {
   name = '酷狗';
   platform = 'kugou';
   key = 'kugou';
-  version = '1.0.0';
+  version = '1.1.0';
   baseUrl = 'https://www.kugou.com';
 
   referer = 'https://www.kugou.com/';

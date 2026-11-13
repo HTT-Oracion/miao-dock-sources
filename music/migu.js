@@ -67,7 +67,7 @@ class MiguSource extends MusicSourceBase {
   name = '咪咕';
   platform = 'migu';
   key = 'migu';
-  version = '1.0.0';
+  version = '1.1.0';
   baseUrl = 'https://app.c.nf.migu.cn';
 
   referer = 'https://music.migu.cn/';

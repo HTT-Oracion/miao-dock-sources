@@ -50,7 +50,7 @@ class QqSource extends MusicSourceBase {
   name = 'QQ 音乐';
   platform = 'qq';
   key = 'qq';
-  version = '1.0.0';
+  version = '1.1.0';
   baseUrl = 'https://u.y.qq.com';
 
   referer = 'https://y.qq.com/';

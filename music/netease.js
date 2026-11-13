@@ -11,7 +11,7 @@ class NeteaseSource extends MusicSourceBase {
   name = '网易云';
   platform = 'netease';
   key = 'netease';
-  version = '1.0.0';
+  version = '1.1.0';
   baseUrl = 'https://music.163.com';
 
   // 播放流 Referer（网易云 CDN 防盗链）。
