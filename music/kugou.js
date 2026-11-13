@@ -26,6 +26,14 @@ class KugouSource extends MusicSourceBase {
   version = '1.0.0';
   baseUrl = 'https://www.kugou.com';
 
+  referer = 'https://www.kugou.com/';
+
+  // WebView 登录声明。warmup：登录后缺播放票据时导航个人中心补 Cookie。
+  loginUrl = 'https://www.kugou.com/';
+  loginCookieDomains = 'kugou.com';
+  loginCookieNames = 'token,userid';
+  loginWarmupUrl = 'https://www.kugou.com/newuc/user/uc/type=edit';
+
   async searchSongs({ keyword, limit = 20, offset = 0 }) {
     const pageSize = Math.max(1, Math.min(limit, 20));
     const page = Math.floor(offset / pageSize) + 1;
@@ -173,6 +181,67 @@ class KugouSource extends MusicSourceBase {
       if (i > 0) jar[part.substring(0, i).trim()] = part.substring(i + 1).trim();
     });
     return jar.KuGoo || jar.kugou || jar.Kugou || '';
+  }
+
+  /// 用户歌单（H5 网关 /v7/get_all_list）：需登录；未登录返回空集。
+  ///
+  /// 签名与参数与内置 Dart 实现逐字一致：POST query 挂签名参数、body 为 JSON 串、
+  /// 头带 x-router；签名 = md5(salt + 按 key 排序的 k=v（无分隔）+ body + salt)。
+  async userPlaylists() {
+    const cookie = await getSessionCookie();
+    const auth = this.parseH5Auth(cookie);
+    if (!auth) return { playlists: [] };
+    const body = JSON.stringify({
+      userid: Number(auth.userId) || 0, token: auth.token,
+      total_ver: 979, type: 2, page: 1, pagesize: 50,
+    });
+    const now = String(Date.now());
+    const params = {
+      srcappid: '2919', clientver: '20000', clienttime: now, mid: auth.mid,
+      uuid: now, dfid: auth.dfid, appid: String(KG_WEB_APPID),
+      token: auth.token, userid: auth.userId, plat: '1',
+    };
+    const joined = Object.keys(params).sort().map((k) => k + '=' + params[k]).join('');
+    params.signature = Convert.md5(KG_H5_SALT + joined + body + KG_H5_SALT);
+    const json = await fetchJson(
+      'POST',
+      'https://gateway.kugou.com/v7/get_all_list?' + formEncode(params),
+      Object.assign({}, this.formHeaders, { 'x-router': 'cloudlist.service.kugou.com' }),
+      body,
+    );
+    const status = json.status;
+    if (String(status) === '0' || status === 0) return { playlists: [] };
+    const data = json.data || {};
+    const info = data.info || (data.data && data.data.info) || [];
+    return { playlists: info.map((it) => this.playlistFromV3Special(it)).filter((p) => p && p.name) };
+  }
+
+  /// H5 网关授权解析：KuGoo 复合字段优先，明文键兜底（对齐内置 Dart _parseH5Auth）。
+  parseH5Auth(cookie) {
+    const map = {};
+    (cookie || '').split(';').forEach((part) => {
+      const i = part.indexOf('=');
+      if (i > 0) map[part.substring(0, i).trim()] = part.substring(i + 1).trim();
+    });
+    const compoundRaw = map.KuGoo || map.kugou || '';
+    let compound = '';
+    try { compound = decodeURIComponent(compoundRaw); } catch (e) { compound = compoundRaw; }
+    const inner = {};
+    compound.split('&').forEach((part) => {
+      const i = part.indexOf('=');
+      if (i > 0) inner[part.substring(0, i).trim()] = part.substring(i + 1).trim();
+    });
+    function pick(keys) {
+      for (const k of keys) {
+        const v = inner[k] !== undefined ? inner[k] : map[k];
+        if (v !== undefined && String(v).trim() !== '') return String(v).trim();
+      }
+      return '';
+    }
+    const userId = pick(['KugooID', 'kugouID', 'userid', 'UserId']).replace(/[^0-9]/g, '');
+    const token = pick(['t', 'token', 'T', 'Token']);
+    if (!userId || !token) return null;
+    return { userId: userId, mid: pick(['kg_mid', 'KG_MID']), token: token, dfid: pick(['kg_dfid', 'KG_DFID']) };
   }
 
   parseAuth(cookie) {

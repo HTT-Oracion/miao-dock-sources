@@ -70,6 +70,13 @@ class MiguSource extends MusicSourceBase {
   version = '1.0.0';
   baseUrl = 'https://app.c.nf.migu.cn';
 
+  referer = 'https://music.migu.cn/';
+
+  // WebView 登录声明。
+  loginUrl = 'https://music.migu.cn/v5/';
+  loginCookieDomains = 'migu.cn';
+  loginCookieNames = 'userid,uid';
+
   async searchSongs({ keyword, limit = 30, offset = 0 }) {
     const pageSize = Math.max(1, Math.min(limit, 50));
     const page = Math.floor(offset / pageSize) + 1;
@@ -172,6 +179,40 @@ class MiguSource extends MusicSourceBase {
     const user = (json && json.userInfoItem) || null;
     if (!user || !user.userId) return { loggedIn: false, nick: '' };
     return { loggedIn: true, nick: String(user.nickName || '咪咕用户') };
+  }
+
+  /// 用户歌单（pc/user/home-page/v2.0 三块语义位）。缺 Cookie 时接口回登录页
+  /// 结构（data 非 Map）→ 空集。
+  async userPlaylists() {
+    const json = await this.getJson(
+      'https://app.c.nf.migu.cn/pc/user/home-page/v2.0?' + formEncode({ _t: Date.now() }),
+    );
+    const data = json.data || null;
+    if (!data || typeof data !== 'object') return { playlists: [] };
+    const out = [];
+
+    function collect(node, subscribed) {
+      if (!Array.isArray(node)) return;
+      for (const it of node) {
+        if (!it) continue;
+        const id = String(it.playlistId || it.id || it.contentId || '');
+        const name = String(it.title || it.name || '');
+        if (!id || !name) continue;
+        out.push({
+          id: id,
+          name: name,
+          trackCount: Number(it.totalCount || it.songCount || 0),
+          description: String(it.summary || it.desc || ''),
+          coverUrl: padImage(it.img || it.image || it.cover),
+          subscribed: subscribed,
+        });
+      }
+    }
+
+    collect(data.userPrivateItems, false);
+    collect(data.myCreatedMusicLists && data.myCreatedMusicLists.createdMusicLists, false);
+    collect(data.myCollectedMusicLists && data.myCollectedMusicLists.collectMusicLists, true);
+    return { playlists: out };
   }
 
   // ── 映射 ────────────────────────────────────────────────────────────────

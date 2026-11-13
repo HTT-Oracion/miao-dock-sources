@@ -53,6 +53,13 @@ class QqSource extends MusicSourceBase {
   version = '1.0.0';
   baseUrl = 'https://u.y.qq.com';
 
+  referer = 'https://y.qq.com/';
+
+  // WebView 登录声明。
+  loginUrl = 'https://y.qq.com/n/ryqq/profile';
+  loginCookieDomains = 'qq.com,y.qq.com';
+  loginCookieNames = 'uin,qm_keyst';
+
   async searchSongs({ keyword, limit = 30, offset = 0 }) {
     const pageSize = Math.max(1, Math.min(limit, 30));
     const payload = {
@@ -167,6 +174,38 @@ class QqSource extends MusicSourceBase {
 
   /// 账户信息（对齐 miao-dock：musicu GetLoginUserInfo；Cookie 带 qm_keyst 时
   /// comm 加 authst 才拿得到昵称）。
+  async userPlaylists() {
+    const cookie = await getSessionCookie();
+    const jar = {};
+    (cookie || '').split(';').forEach((part) => {
+      const i = part.indexOf('=');
+      if (i > 0) jar[part.substring(0, i).trim()] = part.substring(i + 1).trim();
+    });
+    const uin = jar.uin || jar.qq || '';
+    if (!uin) return { playlists: [] };
+
+    const createdQ = formEncode({
+      hostUin: 0, hostuin: uin, sin: 0, size: 200, g_tk: 5381, loginUin: uin,
+      format: 'json', inCharset: 'utf8', outCharset: 'utf-8', notice: 0,
+      platform: 'yqq.json', needNewCode: 0,
+    });
+    const created = await this.getJson('https://c.y.qq.com/rsc/fcgi-bin/fcg_user_created_diss?' + createdQ);
+    const collectedQ = formEncode({ ct: 20, cid: 205360956, userid: uin, reqtype: 3, sin: 0, ein: 199 });
+    const collected = await this.getJson('https://c.y.qq.com/fav/fcgi-bin/fcg_get_profile_order_asset.fcg?' + collectedQ);
+
+    const rows = [].concat(created.data && created.data.disslist || []).concat(collected.data && collected.data.cdlist || []);
+    const seen = {};
+    const out = [];
+    for (const it of rows) {
+      if (!it) continue;
+      const p = this.playlistFromDiss(it);
+      if (!p || !p.id || !p.name || seen[p.id]) continue;
+      seen[p.id] = true;
+      out.push(p);
+    }
+    return { playlists: out };
+  }
+
   async loginInfo() {
     const cookie = await getSessionCookie();
     const jar = {};

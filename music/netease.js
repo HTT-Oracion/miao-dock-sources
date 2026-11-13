@@ -14,6 +14,14 @@ class NeteaseSource extends MusicSourceBase {
   version = '1.0.0';
   baseUrl = 'https://music.163.com';
 
+  // 播放流 Referer（网易云 CDN 防盗链）。
+  referer = 'https://music.163.com/';
+
+  // WebView 登录声明（App 据此打开官方登录页并回读 Cookie）。
+  loginUrl = 'https://music.163.com/#/login';
+  loginCookieDomains = '163.com,netease.com';
+  loginCookieNames = 'MUSIC_U';
+
   async searchSongs({ keyword, limit = 30, offset = 0 }) {
     const json = await this.postForm('/api/search/get/web', { s: keyword, type: 1, limit: limit, offset: offset });
     return { songs: this.songs(json.result && json.result.songs) };
@@ -99,6 +107,46 @@ class NeteaseSource extends MusicSourceBase {
     // userId 必须存在才算登录（参考 normalizeLoginInfo）。
     const uid = String(profile.userId || profile.user_id || profile.id || '');
     return { loggedIn: uid.length > 0, nick: String(profile.nickname || '') };
+  }
+
+  /// 每日推荐（内置 Dart 口径：personalized/newsong 匿名可取，song.al 缺图用外层 picUrl）。
+  async dailySongs() {
+    const json = await this.getJson('/api/personalized/newsong?limit=6');
+    const list = json.result || [];
+    const songs = [];
+    for (const item of list) {
+      const inner = item.song || item;
+      const song = this.song(inner);
+      if (!song || !song.title) continue;
+      // 外层 picUrl 常是推荐位封面，内层 al 往往缺图 —— 补到歌上。
+      if (!song.coverUrl) song.coverUrl = String(item.picUrl || '');
+      songs.push(song);
+    }
+    return { songs: songs };
+  }
+
+  /// 相似歌曲（心动模式驱动）：登录态走智能播放，失败回退匿名 simSong。
+  async similarSongs({ id }) {
+    if (this.loggedInCache) {
+      try {
+        const liked = (await this.userPlaylists()).playlists.find((p) => p.special);
+        if (liked) {
+          const json = await this.postForm('/api/playmode/intelligence/list', {
+            songId: id, type: 'fromPlayOne', playlistId: liked.id, startMusicId: id, count: 1,
+          });
+          const rows = json.data || [];
+          const songs = rows
+            .filter((it) => it && it.songInfo)
+            .map((it) => this.song(it.songInfo))
+            .filter((s) => s && s.title);
+          if (songs.length) return { songs: songs.slice(0, 20) };
+        }
+      } catch (e) {
+        // 智能播放要求登录与喜欢歌单；失败继续走匿名接口。
+      }
+    }
+    const json = await this.getJson('/api/v1/discovery/simiSong?' + formEncode({ songid: id }));
+    return { songs: (json.songs || []).map((it) => this.song(it)).filter((s) => s && s.title) };
   }
 
   /// 发现页「推荐歌单」卡（匿名可取）。
