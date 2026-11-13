@@ -103,10 +103,14 @@ class NeteaseSource extends MusicSourceBase {
     const json = await this.getJson('/api/w/nuser/account/get');
     const data = json.data || json;
     const profile = data.profile || json.profile || (data.account && data.account.profile) || (json.account && json.account.profile) || null;
-    if (!profile) return { loggedIn: false, nick: '' };
+    if (!profile) return { loggedIn: false, nick: '', avatarUrl: '' };
     // userId 必须存在才算登录（参考 normalizeLoginInfo）。
     const uid = String(profile.userId || profile.user_id || profile.id || '');
-    return { loggedIn: uid.length > 0, nick: String(profile.nickname || '') };
+    return {
+      loggedIn: uid.length > 0,
+      nick: String(profile.nickname || ''),
+      avatarUrl: this.picUrl(profile.avatarUrl),
+    };
   }
 
   /// 每日推荐（内置 Dart 口径：personalized/newsong 匿名可取，song.al 缺图用外层 picUrl）。
@@ -119,7 +123,7 @@ class NeteaseSource extends MusicSourceBase {
       const song = this.song(inner);
       if (!song || !song.title) continue;
       // 外层 picUrl 常是推荐位封面，内层 al 往往缺图 —— 补到歌上。
-      if (!song.coverUrl) song.coverUrl = String(item.picUrl || '');
+      if (!song.coverUrl) song.coverUrl = this.picUrl(item.picUrl);
       songs.push(song);
     }
     return { songs: songs };
@@ -174,6 +178,15 @@ class NeteaseSource extends MusicSourceBase {
 
   // ── 字段映射（与内置 Dart 版一致） ─────────────────────────────────────
 
+  /// 网易云封面统一 https + 300×300 缩放参数。
+  /// 🔴 http 直连会 403（播放器 artUri 走系统缓存管理器，无自定义头）。
+  picUrl(raw) {
+    const v = String(raw || '').trim();
+    if (!v) return '';
+    const base = v.replace('http://', 'https://');
+    return base.indexOf('?') >= 0 ? base : base + '?param=300y300';
+  }
+
   songs(list) {
     return (list || []).map((it) => this.song(it)).filter((s) => s && s.title);
   }
@@ -188,7 +201,7 @@ class NeteaseSource extends MusicSourceBase {
       artist: artists.length ? artists.join(' / ') : String(it.artist || ''),
       album: String(album.name || ''),
       durationMs: Number(it.dt || it.duration || 0),
-      coverUrl: String(album.picUrl || ''),
+      coverUrl: this.picUrl(album.picUrl),
     };
   }
 
@@ -206,7 +219,7 @@ class NeteaseSource extends MusicSourceBase {
       trackCount: Number(it.trackCount || it.songCount || 0),
       playCountValue: Number(it.playCount || it.playcount || 0),
       description: nick,
-      coverUrl: String(it.coverImgUrl || it.picUrl || ''),
+      coverUrl: this.picUrl(it.coverImgUrl || it.picUrl),
       author: nick || undefined,
       // 🔴 specialType=5 是【我喜欢的音乐】：歌单库用它做置顶横卡（groupPlaylists）。
       special: Number(it.specialType || 0) === 5,
