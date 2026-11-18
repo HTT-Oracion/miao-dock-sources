@@ -50,7 +50,7 @@ class QqSource extends MusicSourceBase {
   name = 'QQ 音乐';
   platform = 'qq';
   key = 'qq';
-  version = '1.1.0';
+  version = '1.2.0';
   baseUrl = 'https://u.y.qq.com';
 
   referer = 'https://y.qq.com/';
@@ -59,6 +59,8 @@ class QqSource extends MusicSourceBase {
   loginUrl = 'https://y.qq.com/n/ryqq/profile';
   loginCookieDomains = 'qq.com,y.qq.com';
   loginCookieNames = 'uin,qm_keyst';
+  // 补票页：登录后缺播放票据时导航播放器页，触发 qm_keyst 写入（对齐 Rust warmup）。
+  loginWarmupUrl = 'https://y.qq.com/n/ryqq/player';
 
   async searchSongs({ keyword, limit = 30, offset = 0 }) {
     const pageSize = Math.max(1, Math.min(limit, 30));
@@ -172,8 +174,7 @@ class QqSource extends MusicSourceBase {
     return { url: null };
   }
 
-  /// 账户信息（对齐 miao-dock：musicu GetLoginUserInfo；Cookie 带 qm_keyst 时
-  /// comm 加 authst 才拿得到昵称）。
+  /// 用户歌单（自建 + 收藏两接口）：未登录返回空集。
   async userPlaylists() {
     const cookie = await getSessionCookie();
     const jar = {};
@@ -206,6 +207,8 @@ class QqSource extends MusicSourceBase {
     return { playlists: out };
   }
 
+  /// 账户信息（对齐 miao-dock：loggedIn 只认 uin + 播放票据链是否齐全，属于
+  /// Cookie 完整性判据；GetLoginUserInfo 只补昵称/头像，接口失败不撤登录态）。
   async loginInfo() {
     const cookie = await getSessionCookie();
     const jar = {};
@@ -213,24 +216,39 @@ class QqSource extends MusicSourceBase {
       const i = part.indexOf('=');
       if (i > 0) jar[part.substring(0, i).trim()] = part.substring(i + 1).trim();
     });
-    const uin = jar.uin || jar.qq || '';
-    const musicKey = jar.qm_keyst || jar.qqmusic_key || '';
+    // uin 别名链与 Rust cookie.rs qq_extract_uin 一致；musicKey 只认播放票据链
+    // （qm_keyst/qqmusic_key/music_key/wxskey，对齐 qq_cookie_has_playback）——
+    // p_skey/skey 等网页会话票常先于 qm_keyst 下发，不能用来判登录（半张票提前收口）。
+    const loginType = parseInt(jar.login_type || '0', 10) || 0;
+    const uinRaw = loginType === 2
+      ? (jar.wxuin || jar.uin || jar.p_uin || '')
+      : (jar.uin || jar.qqmusic_uin || jar.wxuin || jar.p_uin || '');
+    const uin = String(uinRaw).replace(/[^0-9]/g, '').replace(/^0+/, '');
+    const musicKey = jar.qm_keyst || jar.qqmusic_key || jar.music_key || jar.wxskey || '';
     if (!uin || !musicKey) return { loggedIn: false, nick: '' };
 
-    const payload = {
-      comm: { uin: uin, format: 'json', ct: 19, cv: 0, authst: musicKey },
-      req_0: {
-        module: 'music.UserInfo.userInfoServer',
-        method: 'GetLoginUserInfo',
-        param: {},
-      },
-    };
-    const json = await this.postJsonMusicu(payload);
-    const data = json.req_0 && json.req_0.data;
-    if (!data) return { loggedIn: false, nick: '' };
-    const user = data.user_info || data.userInfo || data.user || data.profile || data;
-    const nick = String(user.nick || user.nickname || user.name || '');
-    return { loggedIn: nick.length > 0, nick: nick };
+    // 昵称 / 头像只是展示信息：接口失败或 data 为空时保持 loggedIn:true。
+    try {
+      const payload = {
+        comm: { uin: uin, format: 'json', ct: 19, cv: 0, authst: musicKey },
+        req_0: {
+          module: 'music.UserInfo.userInfoServer',
+          method: 'GetLoginUserInfo',
+          param: {},
+        },
+      };
+      const json = await this.postJsonMusicu(payload);
+      const data = json.req_0 && json.req_0.data;
+      if (!data) return { loggedIn: true, nick: '' };
+      const user = data.user_info || data.userInfo || data.user || data.profile || data;
+      return {
+        loggedIn: true,
+        nick: String(user.nick || user.nickname || user.name || ''),
+        avatarUrl: String(user.headpic || user.avatar || user.avatarUrl || user.head_url || user.picurl || ''),
+      };
+    } catch (e) {
+      return { loggedIn: true, nick: '' };
+    }
   }
 
   /// musicu POST：sign 挂在 URL 上；comm 用 payload 里的（songUrl 用简化版）。

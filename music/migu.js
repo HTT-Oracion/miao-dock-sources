@@ -67,8 +67,11 @@ class MiguSource extends MusicSourceBase {
   name = '咪咕';
   platform = 'migu';
   key = 'migu';
-  version = '1.1.0';
+  version = '1.2.0';
   baseUrl = 'https://app.c.nf.migu.cn';
+
+  // loginInfo 校验出的 uid（listen 头用，对齐 Rust 持久化 uid）。
+  _uid = '';
 
   referer = 'https://music.migu.cn/';
 
@@ -131,15 +134,40 @@ class MiguSource extends MusicSourceBase {
 
   async listen({ contentId, copyrightId, quality }) {
     const toneFlag = { standard: 'PQ', high: 'HQ', lossless: 'SQ' }[quality] || 'ZQ';
+    // 请求头对齐 Rust listen_url：缺 channel/birth/referer 时服务端不回混淆 JSON
+    // （实测 78 字节 hex，decodeListenBody 失败 → songUrl 全 null）。
+    const headers = {
+      channel: '014X031',
+      appid: 'h5',
+      birth: 'h5page',
+      signature: '1',
+      referer: 'https://music.migu.cn/',
+    };
+    const cookie = await getSessionCookie();
+    if (cookie) headers.Cookie = cookie;
+    const uid = this.listenUid(cookie);
+    if (uid) headers.uid = uid;
     const res = await Network.fetchBytes('GET', MIGU_LISTEN + '?' + formEncode({
       contentId: contentId, copyrightId: copyrightId, scene: '',
       netType: '01', resourceType: 2, toneFlag: toneFlag,
-    }));
+    }), headers);
     if (res.status < 200 || res.status >= 300) {
       throw sourceError('NETWORK', 'HTTP ' + res.status);
     }
     const bytes = Convert.decodeBase64(res.bodyBase64);
     return decodeListenBody(bytes);
+  }
+
+  /// listen 的 uid 头（对齐 Rust 持久化 uid）：loginInfo 校验过就用实例缓存，
+  /// 否则按 Cookie 明文键兜底；都拿不到返回空（不传头，也不为它多打一次接口）。
+  listenUid(cookie) {
+    if (this._uid) return this._uid;
+    const jar = {};
+    (cookie || '').split(';').forEach((part) => {
+      const i = part.indexOf('=');
+      if (i > 0) jar[part.substring(0, i).trim()] = part.substring(i + 1).trim();
+    });
+    return String(jar.userid || jar.uid || jar.migu_userid || '').replace(/[^0-9]/g, '');
   }
 
   async songUrl({ id, mediaId, quality }) {
@@ -170,15 +198,25 @@ class MiguSource extends MusicSourceBase {
     return { lrc: res.body };
   }
 
-  /// 账户信息（对齐 miao-dock：GET queryUserInfo，Cookie 由引擎注入）。
+  /// 账户信息（对齐 miao-dock：GET queryUserInfo，Cookie 由引擎注入；头像取
+  /// userInfoItem.smallIcon 经 padImage）。
   async loginInfo() {
     const json = await this.getJson(
       'https://app.c.nf.migu.cn/pc/user/h5/queryUserInfo/v1.0',
       { Cookie: await getSessionCookie() },
     );
     const user = (json && json.userInfoItem) || null;
-    if (!user || !user.userId) return { loggedIn: false, nick: '' };
-    return { loggedIn: true, nick: String(user.nickName || '咪咕用户') };
+    if (!user || !user.userId) {
+      this._uid = '';
+      return { loggedIn: false, nick: '', avatarUrl: '' };
+    }
+    // uid 实例缓存：listen 请求头用（Rust 侧持久化 uid，JS 侧按住源实例生命周期）。
+    this._uid = String(user.userId);
+    return {
+      loggedIn: true,
+      nick: String(user.nickName || '咪咕用户'),
+      avatarUrl: padImage(user.smallIcon),
+    };
   }
 
   /// 用户歌单（pc/user/home-page/v2.0 三块语义位）。缺 Cookie 时接口回登录页

@@ -19,11 +19,19 @@ function stripHtml(text) {
   return String(text || '').replace(/<[^>]*>/g, '').trim();
 }
 
+/// 取第一个非空字符串（票据别名链用）。
+function firstNonEmpty(values) {
+  for (const v of values) {
+    if (v !== undefined && v !== null && String(v).trim() !== '') return String(v).trim();
+  }
+  return '';
+}
+
 class KugouSource extends MusicSourceBase {
   name = '酷狗';
   platform = 'kugou';
   key = 'kugou';
-  version = '1.1.0';
+  version = '1.2.0';
   baseUrl = 'https://www.kugou.com';
 
   referer = 'https://www.kugou.com/';
@@ -140,37 +148,25 @@ class KugouSource extends MusicSourceBase {
     return { url: url ? String(url) : null };
   }
 
-  /// 账户信息（对齐 miao-dock：昵称取 Cookie KuGoo 复合字段的 NickName；
-  /// loggedIn 走 userid 有效判定；昵称缺失兜底「酷狗 {userid}」）。
+  /// 账户信息（对齐 miao-dock：loggedIn 用 userId+token 的播放票据口径；昵称取
+  /// Cookie KuGoo 复合字段的 NickName、头像取 Pic/pic（明文键兜底））。
   async loginInfo() {
     const cookie = await getSessionCookie();
     const auth = this.parseAuth(cookie);
-    if (!auth || !auth.loggedInRaw) return { loggedIn: false, nick: '' };
-    const kugooRaw = this.kugooField(cookie);
-    let nick = '';
-    if (kugooRaw) {
-      try {
-        const map = {};
-        decodeURIComponent(kugooRaw).split('&').forEach((part) => {
-          const i = part.indexOf('=');
-          if (i > 0) map[part.substring(0, i).trim()] = part.substring(i + 1).trim();
-        });
-        nick = String(map.NickName || map.nickname || '');
-      } catch (e) {
-        nick = '';
-      }
-    }
-    if (!nick) {
-      // Cookie 明文键兜底（部分版本写在外面）。
-      const jar = {};
-      (cookie || '').split(';').forEach((part) => {
-        const i = part.indexOf('=');
-        if (i > 0) jar[part.substring(0, i).trim()] = part.substring(i + 1).trim();
-      });
-      nick = String(jar.NickName || jar.nickname || '');
-    }
+    if (!auth) return { loggedIn: false, nick: '', avatarUrl: '' };
+    const jar = {};
+    (cookie || '').split(';').forEach((part) => {
+      const i = part.indexOf('=');
+      if (i > 0) jar[part.substring(0, i).trim()] = part.substring(i + 1).trim();
+    });
+    const kugoo = this.kugooMap(cookie);
+    let nick = String(kugoo.NickName || kugoo.nickname || '');
+    let avatarUrl = String(kugoo.Pic || kugoo.pic || '').trim();
+    // Cookie 明文键兜底（部分版本写在外面）。
+    if (!nick) nick = String(jar.NickName || jar.nickname || '');
+    if (!avatarUrl) avatarUrl = String(jar.Pic || jar.avatar || '').trim();
     if (!nick) nick = '酷狗 ' + (auth.userId || '用户');
-    return { loggedIn: true, nick: nick };
+    return { loggedIn: true, nick: nick, avatarUrl: avatarUrl };
   }
 
   /// 从 Cookie 串里取 KuGoo / kugou 复合字段原始值。
@@ -181,6 +177,22 @@ class KugouSource extends MusicSourceBase {
       if (i > 0) jar[part.substring(0, i).trim()] = part.substring(i + 1).trim();
     });
     return jar.KuGoo || jar.kugou || jar.Kugou || '';
+  }
+
+  /// 解析 KuGoo/kugou 复合票据（URL 编码的 k=v&k=v），对齐 Rust parse_kugoo_compound。
+  kugooMap(cookie) {
+    const raw = this.kugooField(cookie);
+    const map = {};
+    if (!raw) return map;
+    try {
+      decodeURIComponent(raw).split('&').forEach((part) => {
+        const i = part.indexOf('=');
+        if (i > 0) map[part.substring(0, i).trim()] = part.substring(i + 1).trim();
+      });
+    } catch (e) {
+      // 形状异常按无复合票处理（明文键仍可兜底）。
+    }
+    return map;
   }
 
   /// 用户歌单（H5 网关 /v7/get_all_list）：需登录；未登录返回空集。
@@ -223,14 +235,7 @@ class KugouSource extends MusicSourceBase {
       const i = part.indexOf('=');
       if (i > 0) map[part.substring(0, i).trim()] = part.substring(i + 1).trim();
     });
-    const compoundRaw = map.KuGoo || map.kugou || '';
-    let compound = '';
-    try { compound = decodeURIComponent(compoundRaw); } catch (e) { compound = compoundRaw; }
-    const inner = {};
-    compound.split('&').forEach((part) => {
-      const i = part.indexOf('=');
-      if (i > 0) inner[part.substring(0, i).trim()] = part.substring(i + 1).trim();
-    });
+    const inner = this.kugooMap(cookie);
     function pick(keys) {
       for (const k of keys) {
         const v = inner[k] !== undefined ? inner[k] : map[k];
@@ -244,18 +249,23 @@ class KugouSource extends MusicSourceBase {
     return { userId: userId, mid: pick(['kg_mid', 'KG_MID']), token: token, dfid: pick(['kg_dfid', 'KG_DFID']) };
   }
 
+  /// 播放票据解析（对齐 Rust extract_kugou_auth）：明文键优先、KuGoo 复合兜底；
+  /// userId + token 齐全才算可用（playbackReady 口径，登录收口与播放共用）。
   parseAuth(cookie) {
     const map = {};
     (cookie || '').split(';').forEach((part) => {
       const i = part.indexOf('=');
       if (i > 0) map[part.substring(0, i).trim()] = part.substring(i + 1).trim();
     });
-    const userId = map.userid || map.UserId || '';
-    const mid = map.mid || map.KugouID || '';
-    const token = map.token || map.t || '';
-    const hasKugoo = !!map.KuGoo;
-    if ((!token || !userId) && !hasKugoo) return null;
-    return { userId: userId, mid: mid || '1', token: token, loggedInRaw: true };
+    const kugoo = this.kugooMap(cookie);
+    const userId = firstNonEmpty([
+      map.userid, map.UserId, map.KugooID, map.kugouID,
+      kugoo.KugooID, kugoo.kugouID, kugoo.userid, kugoo.uid,
+    ]).replace(/[^0-9]/g, '');
+    const token = firstNonEmpty([map.token, map.Token, map.t, map.T, kugoo.t, kugoo.token]);
+    const mid = firstNonEmpty([map.kg_mid, map.KG_MID, map.KUGOU_API_MID, map.mid]) || '1';
+    if (!userId || !token) return null;
+    return { userId: userId, mid: mid, token: token, loggedInRaw: true };
   }
 
   // ── 映射 ────────────────────────────────────────────────────────────────
